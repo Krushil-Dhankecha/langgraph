@@ -176,10 +176,10 @@ def test_ttl_override_default(temp_db_file: str) -> None:
         time.sleep(2)
         store.sweep_ttl()
 
-        # Check results
-        item1 = store.get(("test",), "item1")
-        item2 = store.get(("test",), "item2")
-        item3 = store.get(("test",), "item3")
+        # Check results; refresh_ttl=False so the probes don't slide the TTLs
+        item1 = store.get(("test",), "item1", refresh_ttl=False)
+        item2 = store.get(("test",), "item2", refresh_ttl=False)
+        item3 = store.get(("test",), "item3", refresh_ttl=False)
 
         assert item1 is None  # Should be expired
         assert item2 is not None  # Default TTL, should still be there
@@ -190,8 +190,8 @@ def test_ttl_override_default(temp_db_file: str) -> None:
         store.sweep_ttl()
 
         # Check results again
-        item2 = store.get(("test",), "item2")
-        item3 = store.get(("test",), "item3")
+        item2 = store.get(("test",), "item2", refresh_ttl=False)
+        item3 = store.get(("test",), "item3", refresh_ttl=False)
 
         assert item2 is None  # Default TTL item should be gone
         assert item3 is not None  # No TTL item should still be there
@@ -490,3 +490,57 @@ async def test_async_ttl_refresh_batch_per_op(temp_db_file: str) -> None:
         after = await read_expiries()
         assert after["refreshed"] != before["refreshed"]
         assert after["untouched"] == before["untouched"]
+
+
+def test_ttl_refresh_with_default_config(temp_db_file: str) -> None:
+    """refresh_on_read defaults to True: with only default_ttl configured, a
+    read slides the TTL and refresh_ttl=False opts out, like the Postgres store."""
+    with SqliteStore.from_conn_string(temp_db_file, ttl={"default_ttl": 60.0}) as store:
+        store.setup()
+        store.put(("test",), "item1", {"value": 1})
+
+        def read_expiry() -> str:
+            return store.conn.execute("SELECT expires_at FROM store").fetchone()[0]
+
+        first = read_expiry()
+        time.sleep(1.1)  # CURRENT_TIMESTAMP has second resolution
+
+        assert store.get(("test",), "item1", refresh_ttl=False) is not None
+        assert read_expiry() == first
+
+        assert store.get(("test",), "item1") is not None
+        second = read_expiry()
+        assert second != first
+
+        time.sleep(1.1)
+        assert len(store.search(("test",))) == 1
+        assert read_expiry() != second
+
+
+@pytest.mark.asyncio
+async def test_async_ttl_refresh_with_default_config(temp_db_file: str) -> None:
+    """refresh_on_read defaults to True: with only default_ttl configured, a
+    read slides the TTL and refresh_ttl=False opts out, like the Postgres store."""
+    async with AsyncSqliteStore.from_conn_string(
+        temp_db_file, ttl={"default_ttl": 60.0}
+    ) as store:
+        await store.setup()
+        await store.aput(("test",), "item1", {"value": 1})
+
+        async def read_expiry() -> str:
+            cursor = await store.conn.execute("SELECT expires_at FROM store")
+            return (await cursor.fetchone())[0]
+
+        first = await read_expiry()
+        await asyncio.sleep(1.1)
+
+        assert await store.aget(("test",), "item1", refresh_ttl=False) is not None
+        assert await read_expiry() == first
+
+        assert await store.aget(("test",), "item1") is not None
+        second = await read_expiry()
+        assert second != first
+
+        await asyncio.sleep(1.1)
+        assert len(await store.asearch(("test",))) == 1
+        assert await read_expiry() != second

@@ -318,12 +318,10 @@ class BaseSqliteStore:
                 PreparedGetQuery(select_query, select_params, namespace, items, "get")
             )
 
-            # Add a TTL refresh query if needed
-            if (
-                refresh_keys
-                and self.ttl_config
-                and self.ttl_config.get("refresh_on_read", False)
-            ):
+            # Add a TTL refresh query if needed. The ops carry the already
+            # resolved refresh_ttl flags, so no ttl_config check belongs here;
+            # rows without a TTL are excluded by `ttl_minutes IS NOT NULL`.
+            if refresh_keys:
                 placeholders = ",".join(["?"] * len(refresh_keys))
                 update_query = f"""
                     UPDATE store
@@ -596,12 +594,10 @@ class BaseSqliteStore:
                 logger.debug(f"Search query: {base_query}")
                 logger.debug(f"Search params: {params}")
 
-            # Determine if TTL refresh is needed
-            needs_ttl_refresh = bool(
-                op.refresh_ttl
-                and self.ttl_config
-                and self.ttl_config.get("refresh_on_read", False)
-            )
+            # The op carries the already resolved refresh_ttl flag, so no
+            # ttl_config check belongs here; rows without a TTL are excluded
+            # by `ttl_minutes IS NOT NULL` in the refresh statement.
+            needs_ttl_refresh = bool(op.refresh_ttl)
 
             # The base_query is now the final_sql, and we pass the refresh flag
             final_sql = base_query
@@ -922,12 +918,10 @@ class SqliteStore(BaseSqliteStore, BaseStore):
                 PreparedGetQuery(select_query, select_params, namespace, items, "get")
             )
 
-            # Add a TTL refresh query if needed
-            if (
-                refresh_keys
-                and self.ttl_config
-                and self.ttl_config.get("refresh_on_read", False)
-            ):
+            # Add a TTL refresh query if needed. The ops carry the already
+            # resolved refresh_ttl flags, so no ttl_config check belongs here;
+            # rows without a TTL are excluded by `ttl_minutes IS NOT NULL`.
+            if refresh_keys:
                 placeholders = ",".join(["?"] * len(refresh_keys))
                 update_query = f"""
                     UPDATE store
@@ -1410,7 +1404,7 @@ class SqliteStore(BaseSqliteStore, BaseStore):
             cur.execute(query, params)
             rows = cur.fetchall()
 
-            if needs_refresh and rows and self.ttl_config:
+            if needs_refresh and rows:
                 keys_to_refresh = []
                 for row_data in rows:
                     keys_to_refresh.append((row_data[0], row_data[1]))
